@@ -6,6 +6,7 @@ import std.stdio : writeln;
 import core.stdc.stdlib;
 import core.exception;
 import core.memory : GC;
+import core.stdc.string;
 
 enum DefaultHashTableSize = 1019;
 enum defaultBucketSize = 5;
@@ -14,6 +15,8 @@ auto newAA(size_t hashTableSize = DefaultHashTableSize, T...)(T args)
 {
     return NewAA!(T[1], T[0], hashTableSize)(args);
 }
+
+
 
 void GCaddRangeNewAA(alias values, alias keys, VT, KT)(size_t size)
 {
@@ -36,6 +39,7 @@ struct NewAA(VT, KT, size_t hashTableSize = DefaultHashTableSize)
     struct List
     {
         KT* lastKey = null;
+
         KT* keys = null;
 
         size_t size;
@@ -60,6 +64,7 @@ struct NewAA(VT, KT, size_t hashTableSize = DefaultHashTableSize)
             {
                 values = cast(VT*)(keys + size);
             }
+
             lastKey = (keys + count);
             *lastKey = key;
             *(values + count) = value;
@@ -101,17 +106,19 @@ struct NewAA(VT, KT, size_t hashTableSize = DefaultHashTableSize)
         
         static if (is(T[0] == KT) && is(T[1] == VT))
         {
+            VT* values = void;
             ptrdiff_t i = getKeyIndex(args[0]);
             key = args[0];
-            List* list = hashTable.ptr + i;
-            list.keys = cast(KT*)core.stdc.stdlib.malloc(defaultBucketSize * (KT.sizeof + VT.sizeof));
-            list.values = cast(VT*)(list.keys + defaultBucketSize);
+            List* list = hashTable + i;
+            auto keys = cast(KT*)core.stdc.stdlib.malloc(defaultBucketSize * (KT.sizeof + VT.sizeof));
+            list.keys = keys;
+            values = cast(VT*)(list.keys + defaultBucketSize);
             static if (isArray!VT || isAggregateType!VT || isArray!KT || isAggregateType!KT)
             {
-                GCaddRangeNewAA!(list.values, list.keys, VT, KT)(defaultBucketSize);
+                GCaddRangeNewAA!(values, keys, VT, KT)(defaultBucketSize);
             }
             *(list.keys) = key;
-            *(list.values) = args[1];
+            *(values) = args[1];
             list.size = defaultBucketSize;
             list.count = 1;
             ++_itemsCount;
@@ -147,17 +154,22 @@ struct NewAA(VT, KT, size_t hashTableSize = DefaultHashTableSize)
             core.stdc.stdlib.free(hashTable);
         }
     }
-    
-    sizediff_t getKeyIndex(T)(T key)
+
+    hash_t getKeyHash(T)(T key)
     {
         static if (isIntegral!T)
         {
-            return key % hashTableSize;
+            return key;
         }
         else
         {
-            return MurmurHash64(key) % hashTableSize;
+            return MurmurHash64(key);
         }
+    }
+    
+    hash_t getKeyIndex(T)(T key)
+    {
+        return getKeyHash(key) % hashTableSize;
     }
 
     VT* opBinaryRight(string op)(KT key) if (op == "in")
@@ -181,10 +193,10 @@ struct NewAA(VT, KT, size_t hashTableSize = DefaultHashTableSize)
             
             hashTable = (cast(List *)p);
         }
-        ptrdiff_t keyIndex = getKeyIndex(key);
+        size_t keyIndex = getKeyIndex(key);
         auto list = hashTable + keyIndex;
         KT* current = list.keys;
-        KT* end = list.lastKey;
+        KT* end = list.lastKey + 1;
         VT* values = cast(VT*)(current + list.size);
 
         if (current is null)
@@ -193,30 +205,19 @@ struct NewAA(VT, KT, size_t hashTableSize = DefaultHashTableSize)
             ++_itemsCount;
             return;
         }
-        else
+        do
         {
-            do
+            if (*current == key)
             {
-                if (*current == key)
-                {
-                    *(values + (current - list.keys)) = value;
-                    return;
-                }
-                else if (*end == key)
-                {
-                    *(values + (end - list.keys)) = value;
-                    return;
-                }
-                else
-                {
-                    ++current;
-                    --end;
-                }
+                *(values + (current - list.keys)) = value;
+                return;
             }
-            while (end != current);
-            list.addItem(value, key);
-            ++_itemsCount;
+            ++current;
         }
+        while (end != current);
+        list.addItem(value, key);
+        ++_itemsCount;
+
         
     }
 
