@@ -38,37 +38,32 @@ struct NewAA(VT, KT, size_t hashTableSize = DefaultHashTableSize)
 {
     struct List
     {
-        KT* lastKey = null;
-
         KT* keys = null;
+        VT* values = null;
 
-        size_t size;
-        size_t count;
+        int count = 0;
+        int size = 0;
+
         void addItem(VT value, KT key)
         {
-            VT* values = void;
-            if (count == size)
-            {
-                size += defaultBucketSize;
-                keys = cast(KT*)core.stdc.stdlib.realloc(keys, size * (KT.sizeof + VT.sizeof));
-                values = cast(VT*)(keys + size);
-                core.stdc.string.memmove(values, keys + count, count * VT.sizeof);
+            size += defaultBucketSize;
+            auto realSize = size + 1;
+            keys = cast(KT*)core.stdc.stdlib.realloc(keys, realSize * (KT.sizeof));
+            values = cast(VT*)core.stdc.stdlib.realloc(values, realSize * (VT.sizeof));
 
-                static if (isArray!VT || isAggregateType!VT || isArray!KT || isAggregateType!KT)
-                {
-                    GCaddRangeNewAA!(values, keys, VT, KT)(size);
-                }
-
-            }
-            else
+            static if (isArray!VT || isAggregateType!VT || isArray!KT || isAggregateType!KT)
             {
-                values = cast(VT*)(keys + size);
+                GCaddRangeNewAA!(values, keys, VT, KT)(realSize);
             }
 
-            lastKey = (keys + count);
-            *lastKey = key;
+            *(keys + count) = key;
             *(values + count) = value;
             ++count;
+        }       
+
+        void addSentinel(KT key)
+        {
+            *(keys + count) = key;
         }
         
     }
@@ -159,7 +154,8 @@ struct NewAA(VT, KT, size_t hashTableSize = DefaultHashTableSize)
     {
         static if (isIntegral!T)
         {
-            return key;
+            import util.fasthash;
+            return key;//FarmHash64((cast(ubyte*)&key)[0 .. T.sizeof]);
         }
         else
         {
@@ -167,7 +163,7 @@ struct NewAA(VT, KT, size_t hashTableSize = DefaultHashTableSize)
         }
     }
     
-    hash_t getKeyIndex(T)(T key)
+    size_t getKeyIndex(T)(T key)
     {
         return getKeyHash(key) % hashTableSize;
     }
@@ -195,55 +191,78 @@ struct NewAA(VT, KT, size_t hashTableSize = DefaultHashTableSize)
         }
         size_t keyIndex = getKeyIndex(key);
         auto list = hashTable + keyIndex;
-        KT* current = list.keys;
-        KT* end = list.lastKey + 1;
-        VT* values = cast(VT*)(current + list.size);
 
-        if (current is null)
-        {
+        if (list.count == list.size) {
             list.addItem(value, key);
-            ++_itemsCount;
             return;
         }
-        do
-        {
-            if (*current == key)
-            {
-                *(values + (current - list.keys)) = value;
-                return;
-            }
-            ++current;
-        }
-        while (end != current);
-        list.addItem(value, key);
-        ++_itemsCount;
 
+        list.addSentinel(key);
+
+        KT* haystack = list.keys;
+
+        int off = 0;
         
+        while (*haystack++ != key)
+        {
+            ++off;
+        }
+
+        *(list.values + off) = value;
+
+        if (off == list.count) {
+            ++list.count;
+        }
     }
 
-    KT* findKey(KT key, List* list)
+    /*KT* findKey(KT key, List* list)
+     {
+     KT* haystack = list.keys;
+     KT* end = list.lastKey + 1;
+     while (haystack != end )
+     {
+     if (*haystack == key)
+     {
+     return haystack;
+     }
+     ++haystack;
+     }
+
+     return null;
+     }*/
+
+    int findOffset(KT key, List* list)
     {
         KT* haystack = list.keys;
-        KT* end = list.lastKey + 1;
-        while (haystack != end )
+        typeof(return) offset = 0;
+        while (offset < list.count)
         {
-            if (*haystack == key)
+            if (*(haystack + offset) == key)
             {
-                return haystack;
+                return offset;
             }
-            ++haystack;
+            ++offset;
         }
-
-        return null;
+        
+        return -1;
     }
     
     VT opIndex(KT key)
     {
-        ptrdiff_t keyIndex = getKeyIndex(key);
+        auto keyIndex = getKeyIndex(key);
         auto list = hashTable + keyIndex;
-        auto result = findKey(key, list);
 
-        return result is null ? VT.init : *(cast(VT*)(list.keys + list.size) + (result - list.keys));
+        int offset = 0;
+
+        while (offset != list.count)
+        {
+            if (*(list.keys + offset) == key)
+            {
+                return *(list.values + offset);
+            }
+            ++offset;
+        }
+        return VT.init;
     }
 
     /**
@@ -253,7 +272,6 @@ struct NewAA(VT, KT, size_t hashTableSize = DefaultHashTableSize)
     {
         ptrdiff_t keyIndex = getKeyIndex(key);
         auto list = hashTable + keyIndex;
-        
         return false;
     }
     

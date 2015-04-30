@@ -2,12 +2,18 @@
 
 import std.stdio;
 
-uint rotl32(uint x, byte r)
+static struct MH128
+{
+    ulong h1;
+    ulong h2;
+}
+
+uint rotl32(uint x, byte r) pure nothrow @nogc @safe
 {
     return (x << r) | (x >> (32 - r));
 }
 
-ulong rotl64(ulong x, byte r)
+ulong rotl64(ulong x, byte r) pure nothrow @nogc @safe
 {
     return (x << r) | (x >> (64 - r));
 }
@@ -15,7 +21,7 @@ ulong rotl64(ulong x, byte r)
 //-----------------------------------------------------------------------------
 // Finalization mix - force all bits of a hash block to avalanche
 
-uint fmix(uint h)
+uint fmix(uint h) pure nothrow @nogc @safe
 {
     h ^= h >> 16;
     h *= 0x85ebca6b;
@@ -26,24 +32,26 @@ uint fmix(uint h)
     return h;
 }
 
+
 //----------
 
-ulong fmix(ulong k)
+ulong fmix(ulong k) pure nothrow @nogc @safe
 {
     k ^= k >> 33;
-    k *= 0xff51afd7ed558ccdUL;
+    k *= 0xff51afd7ed558ccd;
     k ^= k >> 33;
-    k *= 0xc4ceb9fe1a85ec53UL;
+    k *= 0xc4ceb9fe1a85ec53;
     k ^= k >> 33;
     
     return k;
 }
 
 //-----------------------------------------------------------------------------
-
-uint MurmurHash32 (immutable void[] key, int len, uint seed)
+uint MurmurHash32 (const void[] key) pure nothrow @nogc
 {
+    immutable seed = 0;
     auto data = cast(immutable ubyte[])key;
+    int len = (cast(int)key.length);
     immutable int nblocks = len >> 2;
     
     uint h1 = seed;
@@ -89,7 +97,6 @@ uint MurmurHash32 (immutable void[] key, int len, uint seed)
     // finalization
     
     h1 ^= len;
-    
     h1 = fmix(h1);
     return h1;
 } 
@@ -201,26 +208,98 @@ version(X86)
 
 version(X86_64)
 {
-    ulong[] MurmurHash128 (immutable void[] key, const int len, immutable uint seed)
+    MH128 MurmurHash128(T: K[], K)(const T key, immutable uint seed = 0) pure nothrow @nogc
     {
-        auto data = cast(immutable ubyte[])key;
-        immutable int nblocks = len >> 4;
+        immutable len = key.length * K.sizeof;
+        ulong nblocks = len >> 3;
+        
+        ulong h1 = seed;
+        ulong h2 = seed;
+
+        ulong c1 = 0x87c37b91114253d5;
+        ulong c2 = 0x4cf5ad432745937f;
+        
+        //----------
+        // body
+
+        auto data = (cast(immutable(ulong)*)key.ptr);
+        while(nblocks--)
+        {
+            ulong k1 = *data++;
+            ulong k2 = *data++;
+            
+            k1 *= c1; k1  = rotl64(k1,31); k1 *= c2; h1 ^= k1;
+            
+            h1 = rotl64(h1,27); h1 += h2; h1 = h1*5+0x52dce729;
+            
+            k2 *= c2; k2  = rotl64(k2,33); k2 *= c1; h2 ^= k2;
+
+            h2 = rotl64(h2,31); h2 += h1; h2 = h2*5+0x38495ab5;
+        }
+        
+        ulong k1 = 0;
+        ulong k2 = 0;
+        
+        switch(len & 15)
+        {
+            case 15: k2 ^= cast(ulong)(data[14]) << 48; goto case;
+            case 14: k2 ^= cast(ulong)(data[13]) << 40; goto case;
+            case 13: k2 ^= cast(ulong)(data[12]) << 32; goto case;
+            case 12: k2 ^= cast(ulong)(data[11]) << 24; goto case;
+            case 11: k2 ^= cast(ulong)(data[10]) << 16; goto case;
+            case 10: k2 ^= cast(ulong)(data[ 9]) << 8; goto case;
+            case  9: k2 ^= cast(ulong)(data[ 8]) << 0;
+                k2 *= c2; k2  = rotl64(k2,33); k2 *= c1; h2 ^= k2;
+                goto case;
+            case  8: k1 ^= cast(ulong)(data[ 7]) << 56; goto case;
+            case  7: k1 ^= cast(ulong)(data[ 6]) << 48; goto case;
+            case  6: k1 ^= cast(ulong)(data[ 5]) << 40; goto case;
+            case  5: k1 ^= cast(ulong)(data[ 4]) << 32; goto case;
+            case  4: k1 ^= cast(ulong)(data[ 3]) << 24; goto case;
+            case  3: k1 ^= cast(ulong)(data[ 2]) << 16; goto case;
+            case  2: k1 ^= cast(ulong)(data[ 1]) << 8; goto case;
+            case  1: k1 ^= cast(ulong)(data[ 0]) << 0; goto default;
+            default:
+                k1 *= c1; k1  = rotl64(k1,31); k1 *= c2; h1 ^= k1;
+        }
+        
+        //----------
+        // finalization
+        
+        h1 ^= len; h2 ^= len;
+        
+        h1 += h2;
+        h2 += h1;
+        
+        h1 = fmix(h1);
+        h2 = fmix(h2);
+
+        h1 += h2;
+        h2 += h1;
+        
+        return typeof(return)(h1, h2);
+    }
+
+    void MurmurHash128(T: K[], K)(const T key, ref MH128 output, immutable uint seed = 0) pure nothrow @nogc
+    {
+        auto data = cast(const(ubyte)[])key;
+        immutable len = data.length;
         
         ulong h1 = seed;
         ulong h2 = seed;
         
-        ulong c1 = 0x87c37b91114253d5UL;
-        ulong c2 = 0x4cf5ad432745937fUL;
+        ulong c1 = 0x87c37b91114253d5;
+        ulong c2 = 0x4cf5ad432745937f;
         
         //----------
         // body
         
-        auto blocks = cast(immutable ulong[])(data);
         
-        for(int i = 0; i < nblocks; i++)
+        while(data.length >= 16)
         {
-            ulong k1 = blocks[i*2+0];
-            ulong k2 = blocks[i*2+1];
+            ulong k1 = *cast(ulong*)data[0 .. ulong.sizeof];
+            ulong k2 = *cast(ulong*)data[ulong.sizeof .. 2 * ulong.sizeof];
+            data = data[2 * ulong.sizeof .. $];
             
             k1 *= c1; k1  = rotl64(k1,31); k1 *= c2; h1 ^= k1;
             
@@ -231,33 +310,28 @@ version(X86_64)
             h2 = rotl64(h2,31); h2 += h1; h2 = h2*5+0x38495ab5;
         }
         
-        //----------
-        // tail
-        
-        auto tail = data[nblocks*16 .. $];
-        
         ulong k1 = 0;
         ulong k2 = 0;
         
         switch(len & 15)
         {
-            case 15: k2 ^= cast(ulong)(tail[14]) << 48; goto case;
-            case 14: k2 ^= cast(ulong)(tail[13]) << 40; goto case;
-            case 13: k2 ^= cast(ulong)(tail[12]) << 32; goto case;
-            case 12: k2 ^= cast(ulong)(tail[11]) << 24; goto case;
-            case 11: k2 ^= cast(ulong)(tail[10]) << 16; goto case;
-            case 10: k2 ^= cast(ulong)(tail[ 9]) << 8; goto case;
-            case  9: k2 ^= cast(ulong)(tail[ 8]) << 0;
+            case 15: k2 ^= cast(ulong)(data[14]) << 48; goto case;
+            case 14: k2 ^= cast(ulong)(data[13]) << 40; goto case;
+            case 13: k2 ^= cast(ulong)(data[12]) << 32; goto case;
+            case 12: k2 ^= cast(ulong)(data[11]) << 24; goto case;
+            case 11: k2 ^= cast(ulong)(data[10]) << 16; goto case;
+            case 10: k2 ^= cast(ulong)(data[ 9]) << 8; goto case;
+            case  9: k2 ^= cast(ulong)(data[ 8]) << 0;
                 k2 *= c2; k2  = rotl64(k2,33); k2 *= c1; h2 ^= k2;
                 goto case;
-            case  8: k1 ^= cast(ulong)(tail[ 7]) << 56; goto case;
-            case  7: k1 ^= cast(ulong)(tail[ 6]) << 48; goto case;
-            case  6: k1 ^= cast(ulong)(tail[ 5]) << 40; goto case;
-            case  5: k1 ^= cast(ulong)(tail[ 4]) << 32; goto case;
-            case  4: k1 ^= cast(ulong)(tail[ 3]) << 24; goto case;
-            case  3: k1 ^= cast(ulong)(tail[ 2]) << 16; goto case;
-            case  2: k1 ^= cast(ulong)(tail[ 1]) << 8; goto case;
-            case  1: k1 ^= cast(ulong)(tail[ 0]) << 0; goto default;
+            case  8: k1 ^= cast(ulong)(data[ 7]) << 56; goto case;
+            case  7: k1 ^= cast(ulong)(data[ 6]) << 48; goto case;
+            case  6: k1 ^= cast(ulong)(data[ 5]) << 40; goto case;
+            case  5: k1 ^= cast(ulong)(data[ 4]) << 32; goto case;
+            case  4: k1 ^= cast(ulong)(data[ 3]) << 24; goto case;
+            case  3: k1 ^= cast(ulong)(data[ 2]) << 16; goto case;
+            case  2: k1 ^= cast(ulong)(data[ 1]) << 8; goto case;
+            case  1: k1 ^= cast(ulong)(data[ 0]) << 0; goto default;
             default:
                 k1 *= c1; k1  = rotl64(k1,31); k1 *= c2; h1 ^= k1;
         }
@@ -275,21 +349,22 @@ version(X86_64)
         
         h1 += h2;
         h2 += h1;
-        
-        return [h1, h2];
+        output.h1 = h1;
+        output.h2 = h2;
     }
 }
 
 version(X86_64)
 {
     // 64-bit hash for 64-bit platforms
-    
-    ulong MurmurHash64(T: K[], K)(T key, immutable uint seed = 0)
+
+    ulong MurmurHash64(T: K[], K)(T key, immutable uint seed = 0) pure nothrow @nogc
     {
         immutable ulong m = 0xc6a4a7935bd1e995;
         immutable int r = 47;
-        int len = (cast(int)key.length);
-        int nblocks = len >> 3;
+        immutable len = key.length * K.sizeof;
+        ulong nblocks = len >> 3;
+
         
         ulong h = seed ^ (len * m);
         
@@ -307,7 +382,7 @@ version(X86_64)
             h *= m;
         }
         
-        auto tail = (cast(immutable ubyte*)key.ptr);
+        auto tail = (cast(ubyte*)data);
         
         switch(len & 7)
         {
@@ -325,7 +400,8 @@ version(X86_64)
         h ^= h >> r;
         h *= m;
         h ^= h >> r;
-        
+        h = fmix(h);
+
         return h;
     }
     

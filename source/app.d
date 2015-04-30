@@ -21,11 +21,12 @@ final:
     void advance() { pos++; if (tape.length <= pos) tape ~= 0; }
     void devance() { if (pos > 0) { pos--; } }
 };
-
+//
 class Program {
     string code;
 
-    NewAA!(int, string) bracket_map;
+    NewAA!(int, int, 73) bracket_map;
+    //int[int] bracket_map;
     
     this(string text) {
         int[] leftstack;
@@ -41,10 +42,8 @@ class Program {
                 int left = leftstack[leftstack.length - 1];
                 leftstack.popBack();
                 int right = pc;
-                auto tm1 = to!string(left);
-                auto tm2 = to!string(right);
-                bracket_map[tm1] = right;
-                bracket_map[tm2] = left;
+                bracket_map[left] = right;
+                bracket_map[right] = left;
             }
             
             pc++;
@@ -70,14 +69,12 @@ class Program {
                     break;
                 case '[':
                     if (tape.get() == 0) { 
-                        auto xxx = to!string(pc);
-                        pc = bracket_map[xxx];
+                        pc = bracket_map[pc];
                     }
                     break;
                 case ']':
                     if (tape.get() != 0) {
-                        auto xxx = to!string(pc);
-                        pc = bracket_map[xxx];
+                        pc = bracket_map[pc];
                     }
                     break;
                 case '.':
@@ -90,15 +87,34 @@ class Program {
         }
     }
 };
+//
+//
+//alias immA = immutable A;
 
 int main(string[] args){
 
-    string text = readText(args[1]);
-    auto p = new Program(text);
-    p.run();
+    //    string text = readText(args[1]);
+    //    auto p = new Program(text);
+    //    p.run();
 
-    //    NewAA!(int,int, 1) sa;
-    //    sa[0] = 1;
-    //    sa[1] = 2;
+    NewAA!(int, int, 6553) aa;
+    
+    
+    foreach (val; 0 .. 1_000_000) {
+        aa[val] = val;
+    }
+    
+    foreach (val; 0 .. 1_000_000) {
+        aa[val] = val;
+    }
+    
+    long res;
+    foreach (val; 0 .. 1_000_000) {
+        res += aa[val];
+    }
+    
+    writeln(res);
+
     return 0;
 }
+
