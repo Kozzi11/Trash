@@ -48,8 +48,12 @@ struct NewAA(VT, KT, size_t hashTableSize = DefaultHashTableSize)
         {
             size += defaultBucketSize;
             auto realSize = size + 1;
-            keys = cast(KT*)core.stdc.stdlib.realloc(keys, realSize * (KT.sizeof));
-            values = cast(VT*)core.stdc.stdlib.realloc(values, realSize * (VT.sizeof));
+            keys = cast(KT*)core.stdc.stdlib.realloc(keys, realSize * (KT.sizeof + VT.sizeof));
+            auto valuesNew = cast(VT*)(keys + realSize);
+            if (count) {
+                core.stdc.string.memmove(valuesNew, values, count * VT.sizeof);
+            }
+            values = valuesNew;
 
             static if (isArray!VT || isAggregateType!VT || isArray!KT || isAggregateType!KT)
             {
