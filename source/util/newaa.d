@@ -2,14 +2,15 @@
 
 import util.murmurhash;
 import std.traits;
+import std.typecons;
 import std.stdio : writeln;
 import core.stdc.stdlib;
 import core.exception;
 import core.memory : GC;
 import core.stdc.string;
 
-enum DefaultHashTableSize = 1019;
-enum defaultBucketSize = 5;
+enum DefaultHashTableSize = 32;
+enum defaultBucketSize = 6;
 
 auto newAA(size_t hashTableSize = DefaultHashTableSize, T...)(T args)
 {
@@ -18,7 +19,7 @@ auto newAA(size_t hashTableSize = DefaultHashTableSize, T...)(T args)
 
 
 
-void GCaddRangeNewAA(alias values, alias keys, VT, KT)(size_t size)
+void GCaddRangeNewAA(VT, KT)(VT* values, KT* keys, size_t size)
 {
     static if ((isArray!VT || isAggregateType!VT) && (isArray!KT || isAggregateType!KT))
     {
@@ -34,43 +35,93 @@ void GCaddRangeNewAA(alias values, alias keys, VT, KT)(size_t size)
     }
 }
 
-struct NewAA(VT, KT, size_t hashTableSize = DefaultHashTableSize)
+void GCremoveRangeNewAA(VT, KT)(VT* values, KT* keys)
 {
-    struct List
+    static if ((isArray!VT || isAggregateType!VT) && (isArray!KT || isAggregateType!KT))
     {
-        KT* keys = null;
-        VT* values = null;
+        GC.removeRange(keys);
+    }
+    else static if (isArray!VT || isAggregateType!VT)
+    {
+        GC.removeRange(values);
+    }
+    else static if (isArray!KT || isAggregateType!KT)
+    {
+        GC.removeRange(keys);
+    }
+}
 
+struct NewAA(VT, KT, size_t startHashTableSize = DefaultHashTableSize)
+{
+
+    /*static struct HashKey
+     {
+     hash_t hash;
+     KT key;
+
+     bool opEquals(const HashKey s) const {
+     if (hash!=s.hash) return false;
+     return key==s.key;
+     }
+     }*/
+
+    //static if (!isIntegral!KT)
+    //{
+    //    alias RKT = HashKey;
+    //} else {
+    alias RKT = KT;
+    //}
+
+    static struct Item
+    {
+        RKT key;
+        VT value;
+        RKT* keys = null;
+        VT* values = null;
+    }
+
+    static struct List
+    {
+        Item item;
         int count = 0;
         int size = 0;
+        size_t position;
 
-        void addItem(VT value, KT key)
+        void addItem(VT value, RKT key)
         {
-            size += defaultBucketSize;
-            auto realSize = size + 1;
-            keys = cast(KT*)core.stdc.stdlib.realloc(keys, realSize * (KT.sizeof + VT.sizeof));
-            auto valuesNew = cast(VT*)(keys + realSize);
-            if (count) {
-                core.stdc.string.memmove(valuesNew, values, count * VT.sizeof);
+            if (size < count) {
+                size += defaultBucketSize;
+                auto oldKeys = item.keys;
+                auto oldValues = item.values;
+                item.keys = cast(RKT*)GC.realloc(item.keys, size * (RKT.sizeof + VT.sizeof));
+                item.values = cast(VT*)(item.keys + size);
+                if (count > 1) {
+                    auto oldSize = size - defaultBucketSize;
+                    memmove(item.values, cast(VT*)(item.keys + oldSize), (count-1) * VT.sizeof);
+                }
             }
-            values = valuesNew;
-
-            static if (isArray!VT || isAggregateType!VT || isArray!KT || isAggregateType!KT)
-            {
-                GCaddRangeNewAA!(values, keys, VT, KT)(realSize);
-            }
-
-            *(keys + count) = key;
-            *(values + count) = value;
+            *(item.keys + count - 1) = key;
+            *(item.values + count - 1) = value;
             ++count;
-        }       
-
-        void addSentinel(KT key)
-        {
-            *(keys + count) = key;
         }
-        
+
+        void popFront()
+        {
+            ++position;
+        }
+
+        auto front()
+        {
+            return position == 0 ? tuple(item.value, item.key) : tuple(*(item.values + position - 1), *(item.keys + position - 1));
+        }
+
+        bool empty()
+        {
+            return count == position;
+        }
     }
+
+    size_t hashTableSize = startHashTableSize;
     
     private size_t _itemsCount;
     
@@ -90,12 +141,30 @@ struct NewAA(VT, KT, size_t hashTableSize = DefaultHashTableSize)
         canCleanup = false;
     }
 
+    void rehash()
+    {
+        auto oldTable = hashTable;
+        auto oldTableSize = hashTableSize;
+        hashTableSize = hashTableSize << 4;
+        hashTable = cast(List *)GC.calloc(hashTableSize * List.sizeof);
+        //GC.addRange(hashTable, hashTableSize * List.sizeof);
+        foreach (listItem; oldTable[0 .. oldTableSize])
+        {
+            foreach (value, key; listItem)
+            {
+                addRehash(value, key);
+            }
+        }
+        //GC.removeRange(oldTable);
+        GC.free(oldTable);
+    }
+
     
     this(T...)(T args) if (args.length > 1)
     {
         KT key;
         
-        auto p = core.stdc.stdlib.calloc(hashTableSize, List.sizeof);
+        auto p = calloc(hashTableSize, List.sizeof);
         if (!p)
         {
             throw new OutOfMemoryError();
@@ -109,7 +178,7 @@ struct NewAA(VT, KT, size_t hashTableSize = DefaultHashTableSize)
             ptrdiff_t i = getKeyIndex(args[0]);
             key = args[0];
             List* list = hashTable + i;
-            auto keys = cast(KT*)core.stdc.stdlib.malloc(defaultBucketSize * (KT.sizeof + VT.sizeof));
+            auto keys = cast(KT*)malloc(defaultBucketSize * (KT.sizeof + VT.sizeof));
             list.keys = keys;
             values = cast(VT*)(list.keys + defaultBucketSize);
             static if (isArray!VT || isAggregateType!VT || isArray!KT || isAggregateType!KT)
@@ -144,14 +213,14 @@ struct NewAA(VT, KT, size_t hashTableSize = DefaultHashTableSize)
     
     ~this()
     {
-        if (canCleanup)
-        {
-            foreach (list; hashTable[0 .. hashTableSize])
-            {
-                core.stdc.stdlib.free(list.keys);
-            }
-            core.stdc.stdlib.free(hashTable);
-        }
+        /*if (canCleanup)
+         {
+         foreach (list; hashTable[0 .. hashTableSize])
+         {
+         core.stdc.stdlib.free(list.keys);
+         }
+         core.stdc.stdlib.free(hashTable);
+         }*/
     }
 
     hash_t getKeyHash(T)(T key)
@@ -159,113 +228,184 @@ struct NewAA(VT, KT, size_t hashTableSize = DefaultHashTableSize)
         static if (isIntegral!T)
         {
             import util.fasthash;
-            return key;//FarmHash64((cast(ubyte*)&key)[0 .. T.sizeof]);
+            return key;//HashLenIntegral(key);
         }
         else
         {
-            return MurmurHash64(key);
+            import util.fasthash;
+            return FarmHash64(key);
+            //return MurmurHash64(key);
         }
     }
     
     size_t getKeyIndex(T)(T key)
-    {
-        return getKeyHash(key) % hashTableSize;
-    }
-
-    VT* opBinaryRight(string op)(KT key) if (op == "in")
-    {
-        ptrdiff_t keyIndex = getKeyIndex(key);
-        auto list = hashTable + keyIndex;
-
-        return findKey(key, list);
-
+    {       
+        return getKeyHash(key) & (hashTableSize-1);
     }
 
     void opIndexAssign(VT value, KT key)
     {
         if (hashTable is null)
         {
-            auto p = core.stdc.stdlib.calloc(hashTableSize, List.sizeof);
+            auto p = GC.calloc(hashTableSize * List.sizeof);
             if (!p)
             {
                 throw new OutOfMemoryError();
             }
-            
+
             hashTable = (cast(List *)p);
         }
-        size_t keyIndex = getKeyIndex(key);
+
+        hash_t hash = getKeyHash(key);
+        size_t keyIndex = hash  & (hashTableSize-1);
         auto list = hashTable + keyIndex;
 
-        if (list.count == list.size) {
-            list.addItem(value, key);
+        /*static if (is(RKT : HashKey))
+         {
+         RKT newKey = RKT(hash, key);
+         if (list.count == 0)
+         {
+         list.item.key = newKey;
+         list.item.value = value;
+         ++list.count;
+         ++_itemsCount;
+         }
+         else if (list.item.key == newKey) 
+         {
+         list.item.value = value;
+         }
+         else 
+         {
+         RKT* haystack = list.item.keys;
+         int offset = 1;
+         
+         while (offset < list.count)
+         {
+         if (*(haystack) == newKey)
+         {
+         *(list.item.values + offset - 1) = value;
+         return;
+         }
+         ++haystack;
+         ++offset;
+         }
+         list.addItem(value, newKey);
+         ++_itemsCount;
+         if (_itemsCount > hashTableSize * (defaultBucketSize >> 1))
+         {
+         rehash;
+         }
+         }
+         } else {*/
+        
+        //     
+        if (list.count == 0)
+        {
+            list.item.key = key;
+            list.item.value = value;
+            ++list.count;
+            ++_itemsCount;
             return;
         }
-
-        list.addSentinel(key);
-
-        KT* haystack = list.keys;
-
-        int off = 0;
-        
-        while (*haystack++ != key)
+        if (list.item.key == key) 
         {
-            ++off;
+            list.item.value = value;
         }
+        else 
+        {
+            KT* haystack = list.item.keys;
+            int offset = 1;
+            
+            while (offset < list.count)
+            {
+                if (*(haystack) == key)
+                {
+                    *(list.item.values + offset - 1) = value;
+                    return;
+                }
+                ++haystack;
+                ++offset;
+            }
+            list.addItem(value, key);
+            ++_itemsCount;
+            if (_itemsCount > hashTableSize * (defaultBucketSize >> 1))
+            {
+                rehash();
+            }
+        }
+        //}
+    }
 
-        *(list.values + off) = value;
+    void addRehash(VT value, RKT key)
+    {
+        //static if (is(RKT : HashKey)) {
+        //     size_t keyIndex = key.hash & (hashTableSize-1);
+        // } else {
+        size_t keyIndex = getKeyIndex(key);
+        // }
 
-        if (off == list.count) {
+        auto list = hashTable + keyIndex;
+        if (list.count == 0)
+        {
+            list.item.key = key;
+            list.item.value = value;
             ++list.count;
         }
-    }
-
-    /*KT* findKey(KT key, List* list)
-     {
-     KT* haystack = list.keys;
-     KT* end = list.lastKey + 1;
-     while (haystack != end )
-     {
-     if (*haystack == key)
-     {
-     return haystack;
-     }
-     ++haystack;
-     }
-
-     return null;
-     }*/
-
-    int findOffset(KT key, List* list)
-    {
-        KT* haystack = list.keys;
-        typeof(return) offset = 0;
-        while (offset < list.count)
+        else 
         {
-            if (*(haystack + offset) == key)
-            {
-                return offset;
-            }
-            ++offset;
+            list.addItem(value, key);
         }
-        
-        return -1;
     }
-    
+
     VT opIndex(KT key)
     {
-        auto keyIndex = getKeyIndex(key);
+        hash_t hash = getKeyHash(key);
+        size_t keyIndex = hash  & (hashTableSize-1);
         auto list = hashTable + keyIndex;
-
-        int offset = 0;
-
-        while (offset != list.count)
+        
+        /*static if (is(RKT : HashKey))
+         {
+         RKT newKey = RKT(hash, key);
+         if (list.item.key == newKey)
+         {
+         return list.item.value;
+         }
+         else
+         {
+         auto haystack = list.item.keys;
+         int offset = 1;
+         
+         while (offset < list.count)
+         {
+         if (*(haystack) == newKey)
+         {
+         return *(list.item.values + offset - 1);
+         }
+         ++haystack;
+         ++offset;
+         }
+         }
+         } else {*/
+        if (list.item.key == key)
         {
-            if (*(list.keys + offset) == key)
-            {
-                return *(list.values + offset);
-            }
-            ++offset;
+            return list.item.value;
         }
+        else
+        {
+            auto haystack = list.item.keys;
+            int offset = 1;
+
+            while (offset < list.count)
+            {
+                if (*(haystack) == key)
+                {
+                    return *(list.item.values + offset - 1);
+                }
+                ++haystack;
+                ++offset;
+            }
+        }
+        //}
         return VT.init;
     }
 

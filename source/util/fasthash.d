@@ -3,6 +3,7 @@ import std.algorithm : swap;
 import core.stdc.string;
 import std.typecons;
 import std.stdio;
+import std.traits : isIntegral;
 
 // Some primes between 2^63 and 2^64 for various uses.
 enum k0 = 0xc3a5c85c97cb3127;
@@ -56,7 +57,7 @@ ulong fasthash64(T:K[], K)(const T buf, immutable ulong seed = 0) pure nothrow @
     return mix(h);
 }
 
-ulong FarmHash64(T:K[], K)(const T buf) pure nothrow @nogc
+ulong FarmHash64(T:K[], K)(T buf) pure nothrow @nogc
 {
     const(char)* s = cast(const(char*))buf.ptr;
     immutable len = buf.length;
@@ -172,6 +173,38 @@ ulong HashLen16(ulong u, ulong v, ulong mul) pure nothrow @nogc
     b ^= (b >> 47);
     b *= mul;
     return b;
+}
+
+ulong HashLenIntegral(T)(T value) pure nothrow @nogc if (isIntegral!T)
+{
+    const (char)* s = (cast(const (char) *)&value)[0 .. value.sizeof].ptr;
+    immutable len = value.sizeof;
+
+    switch(T.sizeof)
+    {
+        case byte.sizeof:
+        case short.sizeof:
+            ubyte a = s[0];
+            ubyte b = s[len >> 1];
+            ubyte c = s[len - 1];
+            uint y = (cast(uint)a) + (cast(uint)(b) << 8);
+            uint z = cast(uint)len + (cast(uint)(c) << 2);
+            return ShiftMix(y * k2 ^ z * k0) * k2;
+        case int.sizeof:
+            ulong mul = k2 + len * 2;
+            ulong a = Fetch32(s);
+            return HashLen16(len + (a << 3), Fetch32(s + len - 4), mul);
+        case long.sizeof:
+            ulong mul = k2 + len * 2;
+            ulong a = Fetch(s) + k2;
+            ulong b = Fetch(s + len - 8);
+            ulong c = Rotate(b, 37) * mul + a;
+            ulong d = (Rotate(a, 25) + b) * mul;
+            return HashLen16(c, d, mul);
+        default:
+            assert(0);
+    }
+    return k2;
 }
 
 ulong HashLen0to16(const char *s, size_t len) pure nothrow @nogc

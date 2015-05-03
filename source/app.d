@@ -4,17 +4,12 @@ import std.stdio;
 import std.file;
 import std.array;
 import std.conv;
+import core.thread;
 
-class Tape {
+static struct Tape {
     int pos;
-    int[] tape;
-    
-    this() {
-        pos = 0;
-        tape ~= 0;
-    }
-    
-final:
+    int[] tape = [0];
+
     int get() { return tape[pos]; }
     void inc() { tape[pos]++; }
     void dec() { tape[pos]--; }
@@ -25,7 +20,7 @@ final:
 class Program {
     string code;
 
-    NewAA!(int, int, 73) bracket_map;
+    NewAA!(int, int) bracket_map;
     //int[int] bracket_map;
     
     this(string text) {
@@ -52,8 +47,10 @@ class Program {
     }
     
     void run() {
-        auto tape = new Tape();
-        for (int pc = 0; pc < code.length; pc++) {
+        auto tape = Tape();
+        int pc = 0;
+
+        while (pc < code.length) {
             switch (code[pc]) {
                 case '+':
                     tape.inc();
@@ -84,6 +81,7 @@ class Program {
                 default:
                     break;
             }
+            ++pc;
         }
     }
 };
@@ -92,29 +90,31 @@ class Program {
 //alias immA = immutable A;
 
 int main(string[] args){
+    import core.memory : GC;
+    GC.disable;
 
     //    string text = readText(args[1]);
     //    auto p = new Program(text);
     //    p.run();
 
-    NewAA!(int, int, 6553) aa;
-    
-    
-    foreach (val; 0 .. 1_000_000) {
-        aa[val] = val;
-    }
-    
-    foreach (val; 0 .. 1_000_000) {
-        aa[val] = val;
-    }
-    
+    NewAA!(int, string, 1048576) aa;
+    //int[string] aa;
     long res;
-    foreach (val; 0 .. 1_000_000) {
-        res += aa[val];
+    foreach (val; 0 .. 40_000_000) {
+        string sv = val.to!string;
+        aa[sv] = val + 1;
     }
     
-    writeln(res);
-
+    writeln(aa.length);
+    //    
+    //    //aa.rehash();
+    //
+    //    foreach (val; 0 .. 1_000_000) {
+    //        res += aa[val.to!string];
+    //    }
+    //    
+    //    writeln(res);
+    //    
     return 0;
 }
 
